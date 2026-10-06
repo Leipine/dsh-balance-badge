@@ -20,6 +20,14 @@
   "engines": {
     "node": ">=20"
   },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Leipine/dsh-balance-badge.git"
+  },
+  "homepage": "https://github.com/Leipine/dsh-balance-badge#readme",
+  "bugs": {
+    "url": "https://github.com/Leipine/dsh-balance-badge/issues"
+  },
   "exports": {
     ".": "./index.js",
     "./client": "./client.js",

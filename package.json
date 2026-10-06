@@ -1,0 +1,64 @@
+{
+  "name": "dsh-balance-badge",
+  "version": "1.0.0",
+  "description": "DeepSeek Harness plugin: shows your account balance, the current peak/off-peak billing window and that window's per-million-token prices under the composer.",
+  "type": "module",
+  "license": "MIT",
+  "keywords": [
+    "dsh",
+    "deepseek",
+    "deepseek-harness",
+    "cordis",
+    "cordis-plugin",
+    "plugin",
+    "balance",
+    "billing",
+    "pricing",
+    "peak",
+    "off-peak"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js",
+    "./package.json": "./package.json",
+    "./locale/*.json": "./locale/*.json"
+  },
+  "files": [
+    "index.js",
+    "client.js",
+    "lib",
+    "locale",
+    "icon.svg",
+    "cordis.patch.yml",
+    "README.md",
+    "README.zh-CN.md",
+    "CHANGELOG.md",
+    "docs",
+    "scripts"
+  ],
+  "scripts": {
+    "test": "node --test test/pricing.test.mjs test/price-table.test.mjs",
+    "test:install": "node test/install-smoke.mjs",
+    "install-plugin": "node scripts/install.mjs"
+  },
+  "meta": {
+    "title": "Balance & billing window",
+    "description": "Shows the DeepSeek account balance, which peak/off-peak billing window is in force, that window's prices and a countdown to the next switch."
+  },
+  "icon": "./icon.svg",
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "immediately": true,
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-conversation"
+      ]
+    }
+  }
+}

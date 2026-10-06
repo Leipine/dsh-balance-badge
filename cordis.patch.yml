@@ -1,0 +1,7 @@
+# dsh bundle layer: mount the balance / billing-window plugin.
+# The Host row serves GET /deepseek-balance/summary; the Client module
+# (package.json dsh.client -> ./client.js) renders the chip in the
+# conversation composer dock.
+- insert:
+    - id: deepseek-balance
+      name: 'dsh-balance-badge'

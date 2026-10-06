@@ -14,7 +14,7 @@ Hover it for the full picture: granted vs. topped-up balance, both tariffs, the 
 
 ## What it shows
 
-- **Balance** — total, plus the granted / topped-up split, read from `GET https://api.deepseek.com/user/balance`.
+- **Balance** — total, plus the granted / topped-up split, read from the signed-in DeepSeek account when there is one and from `GET https://api.deepseek.com/user/balance` otherwise.
 - **Billing window** — whether you are in the peak or the off-peak tariff right now, and when that changes.
 - **The price of that window** — input (cache miss), input (cache hit) and output, in 元 per million tokens, for your model.
 - **A live countdown** — recomputed every second in the browser; the balance itself is refreshed every 60 s.
@@ -24,7 +24,11 @@ The chip is a decoration in `conversation.composer.dock`, so it sits under the c
 ## Requirements
 
 - A DSH installation with the Web UI (the desktop app, or `dsh web`), on **macOS, Windows or Linux**.
-- A DeepSeek API key known to DSH, or exported as `DEEPSEEK_API_KEY`. The plugin resolves it through DSH's own credentials service first, so a key saved in the Models settings page is used without any extra configuration.
+- **Either** a signed-in DeepSeek account **or** a DeepSeek API key known to DSH — the two are separate credentials, and signing in does not create a key.
+  - **Signed in** (the desktop app's account sign-in): nothing to configure. The Host reads the balance through the same `deepseekAccount` service DSH's own account page uses. The account grant is a credential *record*, not a `refs` entry, so no API key is involved.
+  - **API key**: resolved through DSH's credentials service first, then `DEEPSEEK_API_KEY`, then `~/.dsh/.credentials.yaml` — a key saved in the Models settings page needs no extra configuration.
+  - The key is tried **first** and the account only when the key cannot answer, so a deployment that already worked with a key behaves exactly as before; the account is what makes the chip work on a machine that never stored one.
+  - With neither, the chip says "Balance unavailable" and the tooltip names both reasons.
 
 ## Install
 
@@ -71,6 +75,15 @@ curl -s http://127.0.0.1:19387/deepseek-balance/summary | head -c 400
 
 You want `"ok":true`, a `balance.primary` in CNY, and a `window` with `"scheduleKnown":true`. The route only answers loopback callers; anything else gets a 403.
 
+Four fields answer "which credential paid for this, and which code is running":
+
+| Field | Values | Meaning |
+|---|---|---|
+| `balance.source` | `account` / `api-key` | Which seam produced the number |
+| `account` | `ready`, `not-needed`, `signed-out`, `absent`, `no-wallet`, `failed (…)`, `error: …` | The verdict of the account attempt, reported even when the key answered |
+| `clientSource` | `page` / `defaults` | Whether the caller sent the identity headers the Host reports to Platform; a `curl` sends none, the browser half always does |
+| `impl` | build marker | Tells a running module apart from the code on disk after an edit |
+
 ## Pricing rules
 
 DeepSeek moved to **peak / off-peak pricing** on 2026-08-17. In Beijing time (`UTC+8`):
@@ -92,33 +105,44 @@ The off-peak tariff is exactly **half** the peak tariff. Current list prices, in
 
 ## Configuration
 
-The plugin takes one option, `model`, on its bundle row in the profile's `cordis.patch.yml`:
+The plugin takes four options, all on its bundle row in the profile's `cordis.patch.yml`:
+
+| Option | Default | Meaning |
+|---|---|---|
+| `model` | `deepseek-flash` | Which price row to show |
+| `accountClientVersion` | the desktop build this ships with | Version reported to Platform on account reads, for deployments that want to label the caller differently |
+| `locale` | `zh-CN` | Locale reported on account reads when the page does not report one |
+| `path` | `/deepseek-balance/summary` | Route path (mirror any change in `client.js`) |
 
 ```yaml
 - id: deepseek-balance
   name: dsh-balance-badge
   config:
     model: deepseek-v4-pro
+    locale: en-US
 ```
 
-Defaults to `deepseek-flash`. An unknown model degrades to showing the window without prices rather than inventing numbers. To make the balance fresher, lower `BALANCE_CACHE_MS` in `index.js` and `POLL_MS` in `client.js` (both 60 s).
+An unknown model degrades to showing the window without prices rather than inventing numbers. The page always wins over `accountClientVersion` and `locale` for the fields it reports itself (its own language and zone); the options only fill what the caller left out. To make the balance fresher, lower `BALANCE_CACHE_MS` in `index.js` and `POLL_MS` in `client.js` (both 60 s).
 
 ## Security
 
-The API key **never leaves the Host process**. The browser half receives only numbers, and the Host route is fenced to loopback callers:
+Neither credential **ever leaves the Host process** — not the API key, not the account grant. The browser half receives only numbers, and the Host route is fenced to loopback callers:
 
 - the key is read per request through DSH's `credentials` service (falling back to `DEEPSEEK_API_KEY`, then `~/.dsh/.credentials.yaml`);
+- the account route asks DSH's `deepseekAccount` service, which owns the grant and attaches it to the Platform request itself — the plugin never sees the token;
 - `GET /deepseek-balance/summary` returns 403 to any non-loopback peer;
-- no third-party service is contacted — the only outbound call is to `api.deepseek.com`.
+- no third-party service is contacted: the only outbound calls are to `api.deepseek.com` (key route) and `platform.deepseek.com` (account route, through DSH's own service, with the client identity the page reported).
 
 ## Development
 
 ```bash
-npm test             # 22 tests: schedule classification + price table
+npm test             # 33 tests: schedule classification + price table + credential seams
 npm run test:install # drives scripts/install.mjs against a throwaway profile
 ```
 
 Both suites run on `node:test`; there is nothing to install. The schedule tests assert that classification follows the Beijing wall clock, and they pass under `TZ=Asia/Shanghai` and `TZ=America/New_York` alike.
+
+`test/account-fallback.test.mjs` drives the real route handler with a fake Context and a fake `fetch`, so it needs no key, no network and no signed-in account. It pins the precedence (key first, account second), the merge of recharge and bonus wallets, the identity the page reports, and the rule that a broken account seam is reported rather than thrown.
 
 `test:install` is the one that covers the OS branch: it builds a fake `$DSH_HOME`, installs into it for real, and asserts the `node_modules` entry is a *link* (junction on Windows, symlink elsewhere) rather than a copy, that a reinstall is idempotent, and that `--uninstall` reverses both the manifest edits and the link without ever touching the package itself. CI runs it on Linux, macOS and Windows — the macOS run is what proves the path your Mac takes.
 
@@ -130,11 +154,11 @@ The Host half is not reloaded by editing files. Node caches an ES module by URL 
 
 | Path | Role |
 |---|---|
-| `index.js` | Host half — registers the HTTP route, resolves the key, reads the balance |
+| `index.js` | Host half — registers the HTTP route, resolves the credential (account or key), reads the balance |
 | `client.js` | Browser half — the chip in `conversation.composer.dock` |
 | `lib/pricing.js` | Pure schedule classification + the price table (zero dependencies) |
 | `cordis.patch.yml` | The loader row that mounts the plugin |
-| `test/` | `node:test` suites |
+| `test/` | `node:test` suites (`account-fallback` covers the credential seams) |
 | `docs/INSTALL.md` | Per-platform install and troubleshooting |
 | `docs/PRICING.md` | Sourcing and caveats for the schedule data (Chinese) |
 | `scripts/install.mjs` | Cross-platform fallback installer |

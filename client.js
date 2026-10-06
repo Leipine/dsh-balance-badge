@@ -73,6 +73,26 @@ window.__ModuleLoader__.load({
       return lang.startsWith('zh') ? TEXT.zh : TEXT.en
     }
 
+    /**
+     * Identity headers for one poll, so the Host reports Platform the UI that
+     * actually asked instead of its own process defaults.
+     *
+     * This page knows the language and the zone the user is in; the Host cannot.
+     * A build version exists only when the bundler inlined one into this bundle
+     * — when it did not, the header is left out and the Host keeps its own
+     * default rather than a fabricated number.
+     */
+    function identityHeaders() {
+      const headers = {
+        'x-dsh-client-locale': String(document.documentElement.lang || navigator.language || ''),
+        'x-dsh-client-timezone-offset': String(-new Date().getTimezoneOffset() * 60),
+      }
+      if (typeof DSH_CLIENT_VERSION === 'string' && DSH_CLIENT_VERSION !== '') {
+        headers['x-dsh-client-version'] = DSH_CLIENT_VERSION
+      }
+      return headers
+    }
+
     function symbolOf(currency) {
       if (currency === 'CNY') return '¥'
       if (currency === 'USD') return '$'
@@ -124,7 +144,7 @@ window.__ModuleLoader__.load({
       React.useEffect(() => {
         let alive = true
         const load = () => {
-          fetch(ENDPOINT, { headers: { accept: 'application/json' } })
+          fetch(ENDPOINT, { headers: { accept: 'application/json', ...identityHeaders() } })
             .then((response) => {
               if (!response.ok) throw new Error(`HTTP ${response.status}`)
               return response.json()

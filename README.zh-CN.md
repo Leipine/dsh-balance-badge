@@ -18,23 +18,36 @@
 |---|---|
 | `package.json` | bundle 清单：`exports["."] → ./index.js`、`dsh.bundle.patch`、`dsh.client` |
 | `cordis.patch.yml` | 把本包插入 profile 的 loader 树（行 id `deepseek-balance`） |
-| `index.js` | Host 半：`GET /deepseek-balance/summary` |
+| `index.js` | Host 半：`GET /deepseek-balance/summary`，解析凭据（账号或 API Key）并读余额 |
 | `client.js` | 浏览器半：在 `conversation.composer.dock` 注册徽标 |
 | `lib/pricing.js` | 计费时段规则 **+ 价格表**（纯函数，零依赖） |
 | `test/pricing.test.mjs` | 15 条时段测试 |
 | `test/price-table.test.mjs` | 7 条价格测试（含「低谷恒为高峰的一半」） |
+| `test/account-fallback.test.mjs` | 11 条凭据测试（假 Context + 假 fetch，离线跑） |
 | `docs/PRICING.md` | 时段规则的来源、时区陷阱、已验证与未验证项 |
 
 ## 数据
 
 ```
 浏览器徽标 ──GET /deepseek-balance/summary──▶ Host 半
-                                              ├─ credentials 服务解析 DEEPSEEK_API_KEY
-                                              ├─ GET https://api.deepseek.com/user/balance
+                                              ├─① credentials 服务解析 DEEPSEEK_API_KEY
+                                              │    ↳ 环境变量 → ~/.dsh/.credentials.yaml
+                                              │    ↳ GET https://api.deepseek.com/user/balance
+                                              ├─② 账号服务 deepseekAccount.getBalance()
+                                              │    ↳ GET https://platform.deepseek.com/api/v0/users/get_user_summary
                                               └─ lib/pricing.js：时段判定 + 价格表
 ```
 
-API Key **始终留在 Host 进程**；页面只拿到余额数字、时段和价格。路由只接受本机回环请求，其余 403。
+**两条凭据线是分开的，这是本插件最容易误解的地方**：账号登录写入的是 credential **record**
+（`deepseek-account-platform/default`，`kind: grant`），由 `deepseekAccount` 服务持有；
+`refs.DEEPSEEK_API_KEY` 是另一条线，只有「设置 → 模型」页会写。**登录账号不会产生 API Key，
+有 Key 也不代表已登录。**
+
+优先级：**Key 优先，账号兜底**。这样已经能用 Key 的部署行为完全不变，账号只是补上
+「从没存过 Key 的机器」这个原本永远显示「余额不可用」的场景。
+
+API Key 与账号授权 **都始终留在 Host 进程**；页面只拿到余额数字、时段和价格。
+路由只接受本机回环请求，其余 403。
 
 ### 计费时段（官方口径，2026-08-17 生效）
 
@@ -58,9 +71,40 @@ API Key **始终留在 Host 进程**；页面只拿到余额数字、时段和�
 
 ### 余额的实时性
 
-**准实时，不是逐秒。** Host 对上游 `GET /user/balance` 的结果缓存 60 秒，页面每 60 秒轮询一次，
+**准实时，不是逐秒。** Host 对上游结果缓存 60 秒，页面每 60 秒轮询一次，
 所以最坏情况滞后约 2 分钟；倒计时与时段切换是本地每秒计算的。要更灵敏就同时调小
 `index.js` 的 `BALANCE_CACHE_MS` 和 `client.js` 的 `POLL_MS`（浏览器半改完刷新页面即可生效）。
+
+### 排查：哪条凭据线在供数
+
+路由返回四个诊断字段，遇到「余额不可用」先看它们，别猜：
+
+| 字段 | 取值 | 含义 |
+|---|---|---|
+| `balance.source` | `account` / `api-key` | 这个数字来自哪条线 |
+| `account` | `ready` / `not-needed` / `signed-out` / `absent` / `no-wallet` / `failed (…)` / `error: …` | 账号这次尝试的结论，即使最后由 Key 供数也会报 |
+| `clientSource` | `page` / `defaults` | 调用方有没有把身份头送来；`curl` 不送，浏览器半每次都送 |
+| `impl` | 构建标记 | 区分「改完文件后跑的还是缓存里的旧模块」 |
+
+`account` 的取值对应处置：
+
+- `absent` —— 该 profile 没组合账号服务（headless 组合）；只能走 Key。
+- `signed-out` —— 没有可用授权；重新登录账号。
+- `failed (…)` —— Platform 侧拒绝了这次读取（边缘风控/网络），Key 线仍会兜底。
+- `error: …` —— 服务抛错，原文在消息里。
+- `no-wallet` —— 授权有效但钱包为空。
+
+### 浏览器半为什么要把身份报给 Host
+
+Host 进程不知道自己「替谁」在问，而 Platform 的账号接口要求调用方带上客户端身份
+（版本、语言、时区）。所以浏览器半每次轮询都带三个头：
+`x-dsh-client-locale`、`x-dsh-client-timezone-offset`、以及**能拿到才带**的 `x-dsh-client-version`。
+
+版本这一项有已知妥协：`DSH_CLIENT_VERSION` 是 DSH 自家客户端**构建期内联**的常量，
+第三方客户端插件 bundle 取不到，所以实际会回落到 `ACCOUNT_CLIENT_VERSION`
+（`index.js` 顶部，可用 bundle config `accountClientVersion` 覆盖）。代码写成
+`typeof DSH_CLIENT_VERSION === 'string'` 的守卫式读取，将来 DSH 若把版本内联进插件 bundle 会自动接上。
+语言与时区则是真实的页面值。
 
 ## 安装 / 安装状态
 
@@ -115,11 +159,16 @@ Invoke-RestMethod 'http://127.0.0.1:19387/deepseek-balance/summary' | ConvertTo-
 # 2. 单测
 $node = 'C:\Users\LB\.dsh\dsh-runtimes\dsh-primary-runtime\dependencies\node\bin\node.exe'
 & $node --test 'C:\Users\LB\.dsh\dsh_orb\dsh-balance-badge\test\pricing.test.mjs' `
-              'C:\Users\LB\.dsh\dsh_orb\dsh-balance-badge\test\price-table.test.mjs'
+              'C:\Users\LB\.dsh\dsh_orb\dsh-balance-badge\test\price-table.test.mjs' `
+              'C:\Users\LB\.dsh\dsh_orb\dsh-balance-badge\test\account-fallback.test.mjs'
 ```
 
-已实测：22/22 通过；运行中的路由返回 `pricing.model=deepseek-flash`、
+已实测：33/33 通过（15 时段 + 7 价格 + 11 凭据）；运行中的路由返回 `pricing.model=deepseek-flash`、
 低谷 入1/命中0.02/出4、高峰 入2/命中0.04/出8；客户端模块 `dsh-balance-badge` 在模块图中且 bundle 200。
+
+macOS 桌面端另做过一次账号兜底的端到端实测：把一把已被 Platform 判 401 的 Key 留在
+`refs.DEEPSEEK_API_KEY` 里，路由仍返回 `ok:true`、`balance.source=account`、`clientSource=page`，
+徽标显示的是账号钱包余额（已登录账号）。
 
 ## 卸载 / 回滚
 
@@ -137,3 +186,10 @@ node scripts/install.mjs --uninstall
   模块导出 `HOLIDAY_TABLE_VERIFIED = false`，节假日当天 tooltip 会附带提醒。
   官方口径本身（周末/节假日全天空闲）已由价格页原文确认。
 - 价格表默认只收录 `deepseek-flash` 与 `deepseek-v4-pro` 两个模型。
+- 账号**服务**（`dsh-deepseek-account-platform`）挂在 base bundle，桌面端与 `dsh web` 都有；
+  但账号**登录入口**只在桌面渲染器注册（客户端插件里有 `"dshDesktop" in globalThis` 判断）。
+  所以纯 `dsh web` 部署且从未登录过的用户只有 Key 一条路；若与桌面端共用同一个
+  `$DSH_HOME`（凭据文件 `.credentials.yaml` 是 per-DSH_HOME、不是 per-profile），
+  web 端也能读到桌面端登录留下的那份 grant，账号兜底照样生效。
+- 账号接口的客户端版本号取不到真实构建值（见上「浏览器半为什么要把身份报给 Host」），
+  目前是常量兜底；语言与时区是页面真实值。

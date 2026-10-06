@@ -14,7 +14,7 @@ Nothing is installed globally, and nothing outside the profile is touched.
 |---|---|
 | DSH | The desktop app (Orb), or `dsh web`. Profiles are created by DSH itself, so start it once before installing. |
 | Node | 20 or newer, for the CLI steps below. The plugin itself runs inside DSH's own runtime. |
-| DeepSeek API key | Stored in DSH (the Models settings page writes it), or exported as `DEEPSEEK_API_KEY`. Without one the chip shows "余额不可用" and the reason on hover. |
+| Credential | **Either** a signed-in DeepSeek account (desktop sign-in — nothing to configure) **or** a DeepSeek API key stored in DSH (the Models settings page writes it) or exported as `DEEPSEEK_API_KEY`. The key is tried first; the account answers when the key cannot. With neither, the chip shows "余额不可用" and the tooltip names both reasons. |
 
 ## macOS
 
@@ -75,6 +75,8 @@ curl -s http://127.0.0.1:19387/deepseek-balance/summary | head -c 400
 
 A healthy answer contains `"ok":true`, a `balance.primary` entry in CNY, and a `window` with `"scheduleKnown":true`. If the port differs (the app prints the URL it serves), use that one. The route answers **loopback callers only** — anything else gets `403`, by design, because it reports a private balance figure.
 
+`balance.source` tells you which credential produced the number (`account` or `api-key`), and `account` reports the account attempt's own verdict (`ready`, `not-needed`, `signed-out`, `absent`, `no-wallet`, `failed (…)`, `error: …`). A `curl` also reports `clientSource:"defaults"` because it sends no identity headers; the browser half always sends them, so a chip that works while `curl` says `defaults` is expected, not a fault.
+
 Then look at the composer: a chip like
 
 ```
@@ -96,7 +98,19 @@ curl -s http://127.0.0.1:19387/plugins/events --max-time 3 | grep -o '"id":"dsh-
 Node caches an ES module by URL for the life of the process, and DSH's loader only re-`import()`s a bundle when its entry name changes — and every module the entry imports is subject to the same URL cache, so a renamed entry can still pull in a stale child. Renaming the **directory** changes every URL at once and is the reliable way to pick up a Host-side edit without restarting DSH; otherwise restart the app. The browser half is re-read from disk on every request, so a page reload is enough there.
 
 **"余额不可用" with a message on hover.**
-The Host could not resolve an API key, or the upstream call failed; the exact reason is in the tooltip and in the route's `error` field. Keys are resolved per request, so saving one in DSH takes effect on the next poll without a restart.
+Neither credential could answer. Read the route's `account` field to see which one failed and why:
+
+| `account` | What it means | What to do |
+|---|---|---|
+| `not-needed` | The API key answered; the account was never asked | — (nothing is wrong) |
+| `absent` | This composition mounts no account service at all (a headless or embedded tree that skips the base bundle's account row) | Store an API key |
+| `signed-out` | No usable account grant | Sign in to the DeepSeek account, or store an API key |
+| `failed (…)` | Platform refused the read (edge/WAF or network) | Retry; the key route stays in charge |
+| `error: …` | The account service threw; the message is its own | Report it with the message |
+| `no-wallet` | The account is valid but reports no wallet | Check the account on platform.deepseek.com |
+| `ready` | The account answered | — |
+
+The `error` field then carries the key route's own failure (`未找到 DeepSeek 凭据…` when nothing has a key, or `余额接口返回 HTTP 401` when the stored key was rejected). Credentials are resolved per request, so saving a key in DSH takes effect on the next poll without a restart.
 
 **Prices are missing but the window is shown.**
 The configured `model` is not in the price table. See the Configuration section of the main README.

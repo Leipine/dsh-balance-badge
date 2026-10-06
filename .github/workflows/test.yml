@@ -1,0 +1,76 @@
+# The suite the README and CHANGELOG promise: three operating systems, the two
+# supported Node lines, the host-zone independence claim, and the installer's OS
+# branch. The plugin has no dependencies and no build step, so there is nothing
+# to install — every job checks the repository out and runs the tests.
+name: test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# Least privilege: these jobs only read the checkout.
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # Schedule classification and the price table, plus the credential-seam suite
+  # that drives the route with a fake Context and a fake fetch. Runs everywhere
+  # the plugin claims to support.
+  unit:
+    name: unit (${{ matrix.os }}, node ${{ matrix.node }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        node: [20, 22]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+      - run: npm test
+
+  # The schedule tests assert that classification follows the Beijing wall clock
+  # rather than the host zone. Pinning TZ on both sides of the world is what
+  # keeps that claim honest.
+  timezone:
+    name: tz (${{ matrix.tz }}, node ${{ matrix.node }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        tz: [Asia/Shanghai, America/New_York]
+        node: [20, 22]
+    env:
+      TZ: ${{ matrix.tz }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+      - run: npm test
+
+  # test/install-smoke.mjs installs into a throwaway DSH home for real, so each
+  # runner takes the link branch it actually uses: a directory junction on
+  # Windows, a directory symlink on macOS and Linux.
+  installer:
+    name: installer (${{ matrix.os }}, node ${{ matrix.node }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        node: [20, 22]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+      - run: npm run test:install

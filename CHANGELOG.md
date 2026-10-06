@@ -12,6 +12,10 @@ The balance now comes from whichever credential the machine actually has, so a s
 - **Diagnostics on the route.** `balance.source` (`account` / `api-key`), `account` (`ready` / `not-needed` / `signed-out` / `absent` / `no-wallet` / `failed (…)` / `error: …`), `clientSource` (`page` / `defaults`) and `impl` say which seam answered, what the account attempt decided, whether the caller reported an identity, and which Host build is running.
 - **Tests.** `test/account-fallback.test.mjs` (11 cases) drives the real route handler with a fake Context and a fake `fetch`: offline, no key, no signed-in account, no network. `npm test` is 33 cases now.
 
+**Fixes**
+
+- **CI now exists.** The README layout table and the 1.0.0 notes pointed at `.github/workflows/test.yml`, but the repository never contained the file, so nothing ran on push. It is committed now: the unit suites on Linux, macOS and Windows across Node 20 and 22, a timezone job that repeats them under `TZ=Asia/Shanghai` and `TZ=America/New_York` (which is what backs the host-zone-independence claim), and an installer job that takes each runner's real link branch — a directory junction on Windows, a directory symlink on macOS and Linux.
+
 **Notes**
 
 - Both credentials stay in the Host process. The account route never exposes the grant to the plugin — the service owns it and attaches it to the Platform request itself.
